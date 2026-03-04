@@ -1,0 +1,112 @@
+name: App - Build, Attest, Deploy
+
+on:
+  pull_request:
+    paths:
+      - "app/**"
+      - "Dockerfile"
+      - "requirements.txt"
+      - "k8s/**"
+      - "scripts/**"
+  push:
+    branches: ["main"]
+    paths:
+      - "app/**"
+      - "Dockerfile"
+      - "requirements.txt"
+      - "k8s/**"
+      - "scripts/**"
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  PROJECT_ID: clgcporg10-178
+  REGION: us-east1
+  CLUSTER: wiz-gke-cluster
+
+  AR_REPO: wiz-repo
+  IMAGE_NAME: exposure-scanner
+  IMAGE_BASE: us-east1-docker.pkg.dev/clgcporg10-178/wiz-repo/exposure-scanner
+
+  # WIF / SA
+  WIF_PROVIDER: projects/397864292963/locations/global/workloadIdentityPools/github-actions-pool/providers/github-oidc
+  DEPLOY_SA: gha-deployer-clgcporg10-178-ia@clgcporg10-178.iam.gserviceaccount.com
+
+  # Binary Authorization / Attestor / KMS
+  # NOTE: Your policy currently requires signed-images-attestor-v2 (based on your earlier export).
+  ATTESTOR: projects/clgcporg10-178/attestors/signed-images-attestor-v2
+  KMS_LOCATION: us-east1
+  KMS_KEYRING: binauthz-keyring
+  KMS_KEY: image-signing-key
+  KMS_KEY_VERSION: "1"
+
+jobs:
+  build-attest-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Auth to GCP (WIF)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SA }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker auth for Artifact Registry
+        run: |
+          gcloud config set project "${PROJECT_ID}"
+          gcloud auth configure-docker us-east1-docker.pkg.dev --quiet
+
+      - name: Build and push image
+        id: build
+        run: |
+          TAG="${GITHUB_SHA}"
+          docker build -t "${IMAGE_BASE}:${TAG}" .
+          docker push "${IMAGE_BASE}:${TAG}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve image digest
+        id: digest
+        run: |
+          TAG="${{ steps.build.outputs.tag }}"
+          DIGEST="$(gcloud artifacts docker images describe "${IMAGE_BASE}:${TAG}" --format="value(image_summary.digest)")"
+          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+          echo "image_with_digest=${IMAGE_BASE}@${DIGEST}" >> "$GITHUB_OUTPUT"
+
+      - name: Create Binary Authorization attestation (main only)
+        if: github.ref == 'refs/heads/main'
+        run: |
+          chmod +x scripts/binauth-attest.sh
+          scripts/binauth-attest.sh \
+            "${{ steps.digest.outputs.image_with_digest }}" \
+            "${ATTESTOR}" \
+            "${PROJECT_ID}" \
+            "${KMS_LOCATION}" \
+            "${KMS_KEYRING}" \
+            "${KMS_KEY}" \
+            "${KMS_KEY_VERSION}"
+
+      - name: Get GKE credentials
+        if: github.ref == 'refs/heads/main'
+        run: |
+          gcloud container clusters get-credentials "${CLUSTER}" \
+            --region "${REGION}" \
+            --project "${PROJECT_ID}"
+
+      - name: Deploy manifests (kustomize)
+        if: github.ref == 'refs/heads/main'
+        run: |
+          kubectl apply -k k8s
+
+      - name: Pin deployment to digest (Binary Auth friendly)
+        if: github.ref == 'refs/heads/main'
+        run: |
+          kubectl set image deployment/exposure-scanner \
+            exposure-scanner="${{ steps.digest.outputs.image_with_digest }}"
+          kubectl rollout status deployment/exposure-scanner --timeout=180s

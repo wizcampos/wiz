@@ -1,31 +1,39 @@
-name: infra-terraform
+name: IaC - Terraform
 
 on:
-  push:
-    branches: [ "main" ]
+  pull_request:
     paths:
       - "iac/terraform/**"
-  workflow_dispatch: {}
+  push:
+    branches: ["main"]
+    paths:
+      - "iac/terraform/**"
+  workflow_dispatch:
 
 permissions:
   id-token: write
   contents: read
 
+env:
+  PROJECT_ID: clgcporg10-178
+  REGION: us-east1
+  TF_DIR: iac/terraform
+
+  # WIF / SA
+  WIF_PROVIDER: projects/397864292963/locations/global/workloadIdentityPools/github-actions-pool/providers/github-oidc
+  DEPLOY_SA: gha-deployer-clgcporg10-178-ia@clgcporg10-178.iam.gserviceaccount.com
+
 jobs:
   terraform:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: iac/terraform
-
     steps:
       - uses: actions/checkout@v4
 
-      - name: Auth to Google Cloud (OIDC)
+      - name: Auth to GCP (WIF)
         uses: google-github-actions/auth@v2
         with:
-          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
-          service_account: ${{ secrets.GCP_SA_EMAIL }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOY_SA }}
 
       - name: Setup gcloud
         uses: google-github-actions/setup-gcloud@v2
@@ -33,16 +41,22 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: "1.5.7"
+          terraform_version: "1.7.5"
 
-      - name: Terraform Init
-        run: terraform init
+      - name: Terraform fmt / init / validate
+        working-directory: ${{ env.TF_DIR }}
+        run: |
+          terraform fmt -check -recursive
+          terraform init -input=false
+          terraform validate
 
-      - name: Terraform Validate
-        run: terraform validate
+      - name: Terraform plan
+        working-directory: ${{ env.TF_DIR }}
+        run: |
+          terraform plan -input=false -no-color
 
-      - name: Terraform Plan
-        run: terraform plan -out=tfplan
-
-      - name: Terraform Apply
-        run: terraform apply -auto-approve tfplan
+      - name: Terraform apply (main only)
+        if: github.ref == 'refs/heads/main'
+        working-directory: ${{ env.TF_DIR }}
+        run: |
+          terraform apply -input=false -auto-approve
