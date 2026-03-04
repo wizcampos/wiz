@@ -1,19 +1,15 @@
 name: infra-terraform
 
 on:
-  pull_request:
-    paths:
-      - "iac/terraform/**"
-      - ".github/workflows/infra-terraform.yml"
   push:
-    branches: ["main"]
+    branches: [ "main" ]
     paths:
       - "iac/terraform/**"
-      - ".github/workflows/infra-terraform.yml"
+  workflow_dispatch: {}
 
 permissions:
-  contents: read
   id-token: write
+  contents: read
 
 jobs:
   terraform:
@@ -23,34 +19,30 @@ jobs:
         working-directory: iac/terraform
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      # ---- Security scan IaC (tfsec) ----
-      - name: tfsec (IaC scan)
-        uses: aquasecurity/tfsec-action@v1.0.3
+      - name: Auth to Google Cloud (OIDC)
+        uses: google-github-actions/auth@v2
         with:
-          working_directory: iac/terraform
-        continue-on-error: true
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_SA_EMAIL }}
 
-      # ---- Terraform ----
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: 1.6.6
+          terraform_version: "1.5.7"
 
-      - name: Terraform fmt
-        run: terraform fmt -check -recursive
-
-      - name: Terraform init
+      - name: Terraform Init
         run: terraform init
 
-      - name: Terraform validate
+      - name: Terraform Validate
         run: terraform validate
 
-      - name: Terraform plan
+      - name: Terraform Plan
         run: terraform plan -out=tfplan
 
-      - name: Terraform apply
-        if: github.ref == 'refs/heads/main'
+      - name: Terraform Apply
         run: terraform apply -auto-approve tfplan

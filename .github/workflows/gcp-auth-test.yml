@@ -1,0 +1,27 @@
+name: GCP Auth Test (WIF)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  auth-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Auth to Google Cloud via Workload Identity Federation
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: "projects/397864292963/locations/global/workloadIdentityPools/github-actions-pool/providers/github-oidc"
+          service_account: "gha-deployer-clgcporg10-178-ia@clgcporg10-178.iam.gserviceaccount.com"
+
+      - name: gcloud sanity
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Who am I + project
+        run: |
+          gcloud auth list
+          gcloud config set project clgcporg10-178
+          gcloud projects describe clgcporg10-178 --format="value(projectNumber)"
