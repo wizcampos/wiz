@@ -1,33 +1,22 @@
+# OS
+.DS_Store
+
 # Python
 __pycache__/
 *.pyc
-*.pyo
-*.pyd
-
-# MacOS
-.DS_Store
-
-# Virtual environments
+.venv/
 venv/
-.env
 
 # Terraform
-.terraform/
-*.tfstate
-*.tfstate.*
-crash.log
+**/.terraform/
+**/.terraform.lock.hcl
+**/*.tfstate
+**/*.tfstate.*
+**/crash.log
+**/override.tf
+**/override.tf.json
+**/*_override.tf
+**/*_override.tf.json
 
-# Kubernetes
-*.log
-
-# Build artifacts
-dist/
-build/
-
-# IDE files
-.vscode/
-.idea/
-
-# Secrets
-*.pem
-*.key
+# Local env
+.env

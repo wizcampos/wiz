@@ -1,0 +1,88 @@
+name: app-build-deploy
+
+on:
+  pull_request:
+    paths:
+      - "app/**"
+      - "Dockerfile"
+      - "requirements.txt"
+      - "k8s/**"
+      - ".github/workflows/app-build-deploy.yml"
+  push:
+    branches: ["main"]
+    paths:
+      - "app/**"
+      - "Dockerfile"
+      - "requirements.txt"
+      - "k8s/**"
+      - ".github/workflows/app-build-deploy.yml"
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  PROJECT_ID: clgcporg10-178
+  REGION: us-east1
+  REPO: wiz-repo
+  IMAGE_NAME: exposure-scanner
+  CLUSTER: wiz-gke-cluster
+  CLUSTER_REGION: us-east1
+  KUSTOMIZE_DIR: k8s
+
+jobs:
+  build_scan_push_deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: |
+          IMAGE_URI="${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO }}/${{ env.IMAGE_NAME }}"
+          TAG="${GITHUB_SHA}"
+          docker build -t "${IMAGE_URI}:${TAG}" .
+
+      - name: Trivy image scan
+        uses: aquasecurity/trivy-action@0.20.0
+        with:
+          image-ref: "${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
+          format: "table"
+          severity: "CRITICAL,HIGH"
+        continue-on-error: true
+
+      - name: Auth to Google Cloud (OIDC)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure docker auth for Artifact Registry
+        run: gcloud auth configure-docker "${{ env.REGION }}-docker.pkg.dev" --quiet
+
+      - name: Push image
+        run: |
+          IMAGE_URI="${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO }}/${{ env.IMAGE_NAME }}"
+          TAG="${GITHUB_SHA}"
+          docker push "${IMAGE_URI}:${TAG}"
+
+      - name: Get GKE credentials
+        run: |
+          gcloud container clusters get-credentials "${{ env.CLUSTER }}" --region "${{ env.CLUSTER_REGION }}" --project "${{ env.PROJECT_ID }}"
+
+      - name: Deploy with Kustomize (set image tag to SHA)
+        run: |
+          IMAGE_URI="${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPO }}/${{ env.IMAGE_NAME }}"
+          kubectl apply -k "${{ env.KUSTOMIZE_DIR }}" \
+            --dry-run=client -o yaml > /tmp/rendered.yaml
+
+          # Patch rendered manifest with the exact image:tag
+          sed -i "s|image: ${IMAGE_URI}:.*|image: ${IMAGE_URI}:${GITHUB_SHA}|g" /tmp/rendered.yaml || true
+          kubectl apply -f /tmp/rendered.yaml
+
+      - name: Rollout status
+        run: kubectl rollout status deployment/exposure-scanner --timeout=180s
