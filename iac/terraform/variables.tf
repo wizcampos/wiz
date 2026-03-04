@@ -1,15 +1,16 @@
 variable "project_id" {
-  description = "GCP Project ID"
+  description = "GCP project ID"
   type        = string
+  default     = "clgcporg10-178"
 }
 
 variable "region" {
-  description = "GCP region"
+  description = "Deployment region"
   type        = string
   default     = "us-east1"
 }
 
-variable "network_name" {
+variable "vpc_name" {
   default = "wiz-vpc"
 }
 
