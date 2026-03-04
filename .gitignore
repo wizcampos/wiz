@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# MacOS
+.DS_Store
+
+# Virtual environments
+venv/
+.env
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+
+# Kubernetes
+*.log
+
+# Build artifacts
+dist/
+build/
+
+# IDE files
+.vscode/
+.idea/
+
+# Secrets
+*.pem
+*.key
