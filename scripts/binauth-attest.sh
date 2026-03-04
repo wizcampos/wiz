@@ -1,49 +1,40 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-IMAGE_WITH_DIGEST="${1:?image with digest required (e.g. ...@sha256:...)}"
-ATTESTOR="${2:?attestor resource required}"
-PROJECT_ID="${3:?project id required}"
-KMS_LOCATION="${4:?kms location required}"
-KMS_KEYRING="${5:?kms keyring required}"
-KMS_KEY="${6:?kms key required}"
-KMS_KEY_VERSION="${7:?kms key version required}"
+IMAGE="$1"       # full image ref WITH digest: .../exposure-scanner@sha256:...
+ATTESTOR="$2"    # e.g. projects/<proj>/attestors/signed-images-attestor-v2
+PROJECT_ID="$3"
+KMS_LOCATION="$4"     # us-east1
+KEYRING="$5"          # binauthz-keyring
+KEY_NAME="$6"         # image-signing-key
+KEY_VERSION="$7"      # 1
 
-echo "Attesting image: ${IMAGE_WITH_DIGEST}"
-echo "Attestor: ${ATTESTOR}"
+PAYLOAD_FILE="$(mktemp)"
+SIG_FILE="$(mktemp)"
 
-TMPDIR="$(mktemp -d)"
-trap 'rm -rf "$TMPDIR"' EXIT
-
-PAYLOAD_FILE="${TMPDIR}/payload.json"
-SIG_FILE="${TMPDIR}/sig.bin"
-SIG_B64_FILE="${TMPDIR}/sig.b64"
-
-# 1) Create signature payload for this image+attestor
+echo "Creating signature payload..."
 gcloud container binauthz create-signature-payload \
-  --artifact-url="${IMAGE_WITH_DIGEST}" \
-  --attestor="${ATTESTOR}" \
-  --output-file="${PAYLOAD_FILE}" \
-  --project="${PROJECT_ID}"
+  --artifact-url="$IMAGE" \
+  --attestor="$ATTESTOR" \
+  --project="$PROJECT_ID" > "$PAYLOAD_FILE"
 
-# 2) Sign payload with KMS (asymmetric key)
+echo "Signing payload with KMS..."
 gcloud kms asymmetric-sign \
-  --location="${KMS_LOCATION}" \
-  --keyring="${KMS_KEYRING}" \
-  --key="${KMS_KEY}" \
-  --version="${KMS_KEY_VERSION}" \
-  --digest-algorithm="sha512" \
-  --input-file="${PAYLOAD_FILE}" \
-  --signature-file="${SIG_FILE}" \
-  --project="${PROJECT_ID}"
+  --project="$PROJECT_ID" \
+  --location="$KMS_LOCATION" \
+  --keyring="$KEYRING" \
+  --key="$KEY_NAME" \
+  --version="$KEY_VERSION" \
+  --digest-algorithm=sha512 \
+  --input-file="$PAYLOAD_FILE" \
+  --signature-file="$SIG_FILE"
 
-base64 < "${SIG_FILE}" > "${SIG_B64_FILE}"
-
-# 3) Create attestation
+echo "Creating attestation..."
 gcloud container binauthz attestations create \
-  --artifact-url="${IMAGE_WITH_DIGEST}" \
-  --attestor="${ATTESTOR}" \
-  --signature-file="${SIG_B64_FILE}" \
-  --project="${PROJECT_ID}"
+  --project="$PROJECT_ID" \
+  --attestor="$ATTESTOR" \
+  --artifact-url="$IMAGE" \
+  --signature-file="$SIG_FILE" \
+  --public-key-id="//cloudkms.googleapis.com/v1/projects/${PROJECT_ID}/locations/${KMS_LOCATION}/keyRings/${KEYRING}/cryptoKeys/${KEY_NAME}/cryptoKeyVersions/${KEY_VERSION}"
 
-echo "✅ Attestation created."
+echo "Done."
