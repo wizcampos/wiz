@@ -5,3 +5,8 @@ resources:
   - ../../base
 
 nameSuffix: "-2"
+
+images:
+  - name: exposure-scanner
+    newName: us-east1-docker.pkg.dev/clgcporg10-178/wiz-repo/exposure-scanner
+    digest: sha256:29d8cc69f3769528e8ce8a02949608d355ce26640be3dbae9ca4e8cf271c1f3d
