@@ -14,15 +14,24 @@ spec:
       labels:
         app: exposure-scanner
     spec:
-      # Your exercise requirement: app runs with cluster-admin via default SA binding
-      serviceAccountName: default
       containers:
         - name: exposure-scanner
-          # IMPORTANT: Binary Auth likes digests, not tags. We'll set the digest via kustomize.
-          image: us-east1-docker.pkg.dev/clgcporg10-178/wiz-repo/exposure-scanner@sha256:REPLACE_ME
-          imagePullPolicy: IfNotPresent
+          image: exposure-scanner
+          imagePullPolicy: Always
           ports:
             - containerPort: 8080
           env:
             - name: MONGO_URI
               value: "mongodb://admin:VeryStrongPass123%21@10.20.0.3:27017/admin?authSource=admin"
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 20

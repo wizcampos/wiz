@@ -5,3 +5,8 @@ resources:
   - base/deployment.yaml
   - base/service.yaml
   - base/ingress.yaml
+
+images:
+  - name: exposure-scanner
+    newName: us-east1-docker.pkg.dev/clgcporg10-178/wiz-repo/exposure-scanner
+    newTag: "1.0.0"
