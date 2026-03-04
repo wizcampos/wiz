@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Public Cloud Exposure Scanner</title>
+</head>
+<body style="font-family: Arial; max-width: 900px; margin: 40px auto; line-height: 1.4;">
+  <h2 style="margin-bottom: 6px;">Public Cloud Exposure Scanner</h2>
+  <div style="color:#555; margin-bottom: 18px;">
+    Quick external checks for secure-by-default web exposure (headers + basic network reachability).
+  </div>
+
+  <form method="post" action="/scan" style="display:flex; gap:10px; align-items:center;">
+    <input name="target" placeholder="example.com or https://example.com"
+           style="flex:1; padding: 10px; border: 1px solid #ccc; border-radius: 8px;" />
+    <button type="submit"
+            style="padding: 10px 14px; border: 1px solid #222; background:#222; color:#fff; border-radius: 8px; cursor:pointer;">
+      Scan
+    </button>
+    <a href="/history" style="margin-left: 6px;">History</a>
+  </form>
+
+  {% if result %}
+    <hr style="margin: 22px 0;" />
+
+    <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:16px;">
+      <div>
+        <h3 style="margin: 0 0 8px;">Results</h3>
+        <div><b>Target:</b> {{ result.target }}</div>
+        <div style="color:#555;"><b>Normalized:</b> {{ result.normalized }}</div>
+        <div style="color:#555;"><b>Host:</b> {{ result.host }}</div>
+        <div style="color:#555;"><b>Time (UTC):</b> {{ result.timestamp_utc }}</div>
+      </div>
+
+      {% if result.summary %}
+        <div style="min-width: 260px; padding: 14px; border:1px solid #ddd; border-radius: 12px; background:#fafafa;">
+          <div style="font-size: 13px; color:#666;">Best practices met</div>
+          <div style="font-size: 30px; font-weight: 700; margin-top: 4px;">
+            {{ result.summary.met }} / {{ result.summary.total }}
+          </div>
+          <div style="font-size: 13px; color:#666; margin-top: 4px;">
+            ✅ Met &nbsp;&nbsp; ⚠️ Not met / Unknown
+          </div>
+        </div>
+      {% endif %}
+    </div>
+
+    {% if result.checklist %}
+      <h3 style="margin-top: 22px; margin-bottom: 10px;">Checklist</h3>
+
+      <div style="border:1px solid #e3e3e3; border-radius: 12px; overflow:hidden;">
+        {% for c in result.checklist %}
+          <div style="display:flex; gap:10px; padding: 12px 14px; border-top: 1px solid #eee; background:#fff;">
+            <div style="width: 26px; text-align:center; font-size: 18px;">
+              {% if c.met %}✅{% else %}⚠️{% endif %}
+            </div>
+            <div style="flex:1;">
+              <div style="font-weight: 700;">{{ c.title }}</div>
+              <div style="color:#555; font-size: 13px; margin-top: 2px;">{{ c.detail }}</div>
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+    {% endif %}
+
+    {% if result.raw_headers %}
+      <h3 style="margin-top: 22px; margin-bottom: 10px;">Observed Response Headers (HTTPS)</h3>
+      <div style="background:#f6f6f6; padding: 12px 14px; border-radius: 12px; border:1px solid #eee;">
+        <div style="font-size: 13px; color:#666; margin-bottom: 8px;">
+          These are the specific headers the scanner looked at.
+        </div>
+        <pre style="margin:0; white-space: pre-wrap;">{{ result.raw_headers | tojson(indent=2) }}</pre>
+      </div>
+    {% endif %}
+
+  {% endif %}
+</body>
+</html>
