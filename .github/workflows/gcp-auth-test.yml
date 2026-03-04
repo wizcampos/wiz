@@ -11,6 +11,8 @@ jobs:
   auth-test:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+
       - name: Auth to Google Cloud via Workload Identity Federation
         uses: google-github-actions/auth@v2
         with:
