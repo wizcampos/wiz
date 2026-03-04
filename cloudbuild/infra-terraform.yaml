@@ -1,30 +1,52 @@
-steps:
-  - name: "hashicorp/terraform:1.6.6"
-    id: "terraform-init"
-    entrypoint: "sh"
-    args:
-      - "-lc"
-      - |
-        cd iac/terraform
-        terraform init -input=false
-
-  - name: "hashicorp/terraform:1.6.6"
-    id: "terraform-plan"
-    entrypoint: "sh"
-    args:
-      - "-lc"
-      - |
-        cd iac/terraform
-        terraform plan -input=false -out=tfplan
-
-  - name: "hashicorp/terraform:1.6.6"
-    id: "terraform-apply"
-    entrypoint: "sh"
-    args:
-      - "-lc"
-      - |
-        cd iac/terraform
-        terraform apply -input=false -auto-approve tfplan
+substitutions:
+  _TF_DIR: "iac/terraform"
+  _TF_STATE_BUCKET: "wiz-terraform-state-${PROJECT_ID}"
+  _TF_STATE_PREFIX: "env/main"
 
 options:
   logging: CLOUD_LOGGING_ONLY
+
+steps:
+  - name: "gcr.io/cloud-builders/gcloud"
+    id: "Ensure TF state bucket"
+    entrypoint: "bash"
+    args:
+      - "-lc"
+      - |
+        set -euo pipefail
+        if gsutil ls -b "gs://${_TF_STATE_BUCKET}" >/dev/null 2>&1; then
+          echo "TF state bucket exists: gs://${_TF_STATE_BUCKET}"
+        else
+          echo "Creating TF state bucket: gs://${_TF_STATE_BUCKET}"
+          gsutil mb -p "${PROJECT_ID}" -l us-east1 "gs://${_TF_STATE_BUCKET}"
+          gsutil versioning set on "gs://${_TF_STATE_BUCKET}"
+        fi
+
+  - name: "hashicorp/terraform:1.7.5"
+    id: "Terraform Init"
+    entrypoint: "sh"
+    args:
+      - "-lc"
+      - |
+        cd "${_TF_DIR}"
+        terraform init \
+          -backend-config="bucket=${_TF_STATE_BUCKET}" \
+          -backend-config="prefix=${_TF_STATE_PREFIX}"
+
+  - name: "hashicorp/terraform:1.7.5"
+    id: "Terraform Plan"
+    entrypoint: "sh"
+    args:
+      - "-lc"
+      - |
+        cd "${_TF_DIR}"
+        terraform plan -out=tfplan
+
+  - name: "hashicorp/terraform:1.7.5"
+    id: "Terraform Apply"
+    entrypoint: "sh"
+    args:
+      - "-lc"
+      - |
+        cd "${_TF_DIR}"
+        terraform apply -auto-approve tfplan

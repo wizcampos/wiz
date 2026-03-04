@@ -1,78 +1,92 @@
 substitutions:
   _REGION: "us-east1"
-  _PROJECT_ID: "clgcporg10-178"
-  _REPO: "wiz-repo"
-  _IMAGE: "exposure-scanner"
   _CLUSTER: "wiz-gke-cluster"
-  _CLUSTER_REGION: "us-east1"
+  _AR_REPO: "wiz-repo"
+  _IMAGE: "exposure-scanner"
   _NAMESPACE: "default"
-  _K8S_DIR: "k8s"
-  _ATTESTOR: "wiz-attestor"
+  _ATTESTOR: "projects/${PROJECT_ID}/attestors/wiz-attestor"
   _KMS_LOCATION: "us-east1"
   _KMS_KEYRING: "binauthz-keyring"
   _KMS_KEY: "image-signing-key"
   _KMS_KEY_VERSION: "1"
 
+options:
+  logging: CLOUD_LOGGING_ONLY
+
 steps:
   - name: "gcr.io/cloud-builders/docker"
-    id: "docker-build"
+    id: "Build"
     args:
       - "build"
       - "-t"
-      - "${_REGION}-docker.pkg.dev/${_PROJECT_ID}/${_REPO}/${_IMAGE}:${SHORT_SHA}"
+      - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/${_IMAGE}:${SHORT_SHA}"
       - "."
 
   - name: "gcr.io/cloud-builders/docker"
-    id: "docker-push"
+    id: "Push"
     args:
       - "push"
-      - "${_REGION}-docker.pkg.dev/${_PROJECT_ID}/${_REPO}/${_IMAGE}:${SHORT_SHA}"
+      - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/${_IMAGE}:${SHORT_SHA}"
 
-  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk:slim"
-    id: "resolve-digest"
+  - name: "gcr.io/cloud-builders/gcloud"
+    id: "Resolve Digest"
     entrypoint: "bash"
     args:
       - "-lc"
       - |
         set -euo pipefail
         DIGEST=$(gcloud artifacts docker images describe \
-          ${_REGION}-docker.pkg.dev/${_PROJECT_ID}/${_REPO}/${_IMAGE}:${SHORT_SHA} \
+          ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/${_IMAGE}:${SHORT_SHA} \
           --format="value(image_summary.digest)")
-        echo "DIGEST=${DIGEST}" | tee /workspace/digest.env
+        echo "Resolved digest: ${DIGEST}"
+        echo -n "${DIGEST}" > /workspace/IMAGE_DIGEST.txt
 
-  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk:slim"
-    id: "binauthz-attest"
+  - name: "gcr.io/cloud-builders/gcloud"
+    id: "Binary Auth Attest (Optional)"
     entrypoint: "bash"
     args:
       - "-lc"
       - |
         set -euo pipefail
-        source /workspace/digest.env
-        IMAGE_URL="${_REGION}-docker.pkg.dev/${_PROJECT_ID}/${_REPO}/${_IMAGE}@${DIGEST}"
-        echo "Attesting: ${IMAGE_URL}"
-        bash cloudbuild/scripts/binauthz-attest.sh "${IMAGE_URL}" \
-          "${_PROJECT_ID}" "${_ATTESTOR}" \
-          "${_KMS_LOCATION}" "${_KMS_KEYRING}" "${_KMS_KEY}" "${_KMS_KEY_VERSION}"
+        if [[ -z "${_ATTESTOR}" ]]; then
+          echo "No _ATTESTOR set; skipping attestation."
+          exit 0
+        fi
 
-  - name: "gcr.io/google.com/cloudsdktool/cloud-sdk:slim"
-    id: "deploy"
+        chmod +x cloudbuild/scripts/binauth-attest.sh
+        DIGEST="$(cat /workspace/IMAGE_DIGEST.txt)"
+        IMAGE_URL="${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/${_IMAGE}@${DIGEST}"
+
+        cloudbuild/scripts/binauth-attest.sh \
+          "${IMAGE_URL}" \
+          "${_ATTESTOR}" \
+          "${PROJECT_ID}" \
+          "${_KMS_LOCATION}" \
+          "${_KMS_KEYRING}" \
+          "${_KMS_KEY}" \
+          "${_KMS_KEY_VERSION}"
+
+  - name: "gcr.io/cloud-builders/gcloud"
+    id: "Deploy"
     entrypoint: "bash"
     args:
       - "-lc"
       - |
         set -euo pipefail
-        source /workspace/digest.env
-        IMAGE_URL="${_REGION}-docker.pkg.dev/${_PROJECT_ID}/${_REPO}/${_IMAGE}@${DIGEST}"
+        DIGEST="$(cat /workspace/IMAGE_DIGEST.txt)"
+        IMAGE_URL="${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/${_IMAGE}@${DIGEST}"
 
-        gcloud container clusters get-credentials "${_CLUSTER}" --region "${_CLUSTER_REGION}" --project "${_PROJECT_ID}"
+        echo "Getting credentials for ${_CLUSTER}..."
+        gcloud container clusters get-credentials "${_CLUSTER}" --region "${_REGION}" --project "${PROJECT_ID}"
 
-        # If you’re using Kustomize (recommended)
-        # This updates the image in kustomize and applies.
-        cd ${_K8S_DIR}
-        kustomize edit set image exposure-scanner=${IMAGE_URL}
-        kubectl apply -k .
+        echo "Applying kustomize base..."
+        kubectl apply -k k8s
 
-        kubectl rollout status deployment/exposure-scanner -n ${_NAMESPACE} --timeout=180s
+        echo "Updating deployment image to digest..."
+        kubectl -n "${_NAMESPACE}" set image deployment/exposure-scanner \
+          exposure-scanner="${IMAGE_URL}"
 
-options:
-  logging: CLOUD_LOGGING_ONLY
+        kubectl -n "${_NAMESPACE}" rollout status deployment/exposure-scanner --timeout=180s
+
+images:
+  - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/${_IMAGE}:${SHORT_SHA}"
